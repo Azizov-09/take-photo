@@ -6,8 +6,8 @@
             "destination": "/api/index.js"
         },
         {
-            "source": "/(.*)",
-            "destination": "/public/$1"
+            "source": "/upload",
+            "destination": "/api/index.js"
         }
     ]
 }

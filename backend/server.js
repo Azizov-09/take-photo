@@ -6,15 +6,23 @@ const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Resolve static files directory dynamically
+const staticPath = fs.existsSync(path.join(__dirname, 'public'))
+    ? path.join(__dirname, 'public')
+    : (fs.existsSync(path.join(__dirname, '../public'))
+        ? path.join(__dirname, '../public')
+        : __dirname);
 
 // Middleware - allow large base64 payloads
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(express.static(path.join(__dirname, '../public')));
+app.use(express.static(staticPath));
 
 // Multer memory storage for direct file uploads
 const storage = multer.memoryStorage();
@@ -95,7 +103,12 @@ app.post('/api/upload', upload.single('photo'), handleUpload);
 
 // Serve frontend for any other GET requests
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../public/index.html'));
+    const indexPath = path.join(staticPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.sendFile(path.join(__dirname, 'index.html'));
+    }
 });
 
 app.listen(PORT, () => {

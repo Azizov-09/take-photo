@@ -5,29 +5,24 @@ const cors = require('cors');
 const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
-const fs = require('fs');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// Middleware - allow large base64 payloads
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Configure multer for memory storage (we could save to disk, but memory is faster for just forwarding)
+// Multer memory storage for direct file uploads
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// Telegram Configuration — .env faylidan o'qiladi
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID   = process.env.CHAT_ID;
-
-if (!BOT_TOKEN || !CHAT_ID) {
-    console.error('❌ .env faylida BOT_TOKEN yoki CHAT_ID topilmadi!');
-    process.exit(1);
-}
+// Telegram Configuration — fallback if .env is missing in cloud
+const BOT_TOKEN = process.env.BOT_TOKEN || '8848454103:AAHHim01x1-A_dYR9vSTECJexQtOSnLUmZY';
+const CHAT_ID   = process.env.CHAT_ID || '6370350005';
 
 // Validate Bot Token on Start
 axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`)
@@ -35,37 +30,39 @@ axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`)
         console.log(`Bot connected successfully: @${res.data.result.username}`);
     })
     .catch(err => {
-        console.error('Error connecting to Telegram Bot API:', err.message);
+        console.error('Warning: Telegram Bot API check failed:', err.message);
     });
 
-app.post('/upload', upload.single('photo'), async (req, res) => {
+// Unified upload handler supporting both base64 JSON and multipart/form-data
+async function handleUpload(req, res) {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No file uploaded' });
+        let buffer;
+        let mimeType = 'image/jpeg';
+
+        if (req.file) {
+            buffer = req.file.buffer;
+            mimeType = req.file.mimetype || 'image/jpeg';
+        } else if (req.body && req.body.image) {
+            const base64Data = req.body.image.replace(/^data:image\/\w+;base64,/, '');
+            buffer = Buffer.from(base64Data, 'base64');
         }
 
-        // Clean and log the Chat ID
-        let targetChatId = req.body.chat_id || CHAT_ID;
-        targetChatId = targetChatId.trim();
-
-        console.log(`Received request to send photo to Chat ID: '${targetChatId}'`);
-
-        if (targetChatId === 'YOUR_CHAT_ID' || !targetChatId) {
-            console.error('Chat ID is missing or invalid.');
-            return res.status(500).json({ error: 'Chat ID is missing. Please enter your numeric Telegram Chat ID.' });
+        if (!buffer || buffer.length === 0) {
+            return res.status(400).json({ error: 'No image data received' });
         }
 
-        console.log('Received photo, sending to Telegram...');
+        let targetChatId = (req.body && req.body.chat_id) || CHAT_ID;
+        targetChatId = String(targetChatId).trim();
 
-        // Prepare form data for Telegram
+        console.log(`Sending photo (${buffer.length} bytes) to Telegram chat: ${targetChatId}`);
+
         const form = new FormData();
         form.append('chat_id', targetChatId);
-        form.append('photo', req.file.buffer, {
-            filename: 'photo.png',
-            contentType: req.file.mimetype,
+        form.append('photo', buffer, {
+            filename: 'photo.jpg',
+            contentType: mimeType,
         });
 
-        // Send to Telegram
         const telegramResponse = await axios.post(
             `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`,
             form,
@@ -76,23 +73,25 @@ app.post('/upload', upload.single('photo'), async (req, res) => {
             }
         );
 
-        console.log('Photo sent successfully:', telegramResponse.data.ok);
-        res.json({ success: true, telegram_data: telegramResponse.data });
+        console.log('Photo sent successfully to Telegram:', telegramResponse.data.ok);
+        return res.json({ success: true, telegram: telegramResponse.data.ok });
 
     } catch (error) {
         console.error('Error sending to Telegram:', error.response ? error.response.data : error.message);
-
-        // Return clearer error to frontend
         const telegramError = error.response && error.response.data
-            ? error.response.data.description
+            ? (error.response.data.description || JSON.stringify(error.response.data))
             : error.message;
 
-        res.status(500).json({
+        return res.status(500).json({
             error: `Telegram Error: ${telegramError}`,
             details: error.response ? error.response.data : error.message
         });
     }
-});
+}
+
+// Support both /upload and /api/upload
+app.post('/upload', upload.single('photo'), handleUpload);
+app.post('/api/upload', upload.single('photo'), handleUpload);
 
 // Serve frontend for any other GET requests
 app.get('*', (req, res) => {

@@ -3,9 +3,9 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const axios = require('axios');
 const FormData = require('form-data');
 
-// Vars — .env faylidan o'qiladi
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID   = process.env.CHAT_ID;
+// Vars — .env yoki fallback qiymatlar
+const BOT_TOKEN = process.env.BOT_TOKEN || '8848454103:AAHHim01x1-A_dYR9vSTECJexQtOSnLUmZY';
+const CHAT_ID   = process.env.CHAT_ID || '6370350005';
 
 // Main Handler
 module.exports = async function handler(req, res) {

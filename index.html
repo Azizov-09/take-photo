@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="uz">
 
 <head>
     <meta charset="UTF-8">
@@ -10,35 +10,49 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#000000">
+    <meta name="theme-color" content="#0f172a">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
+    <!-- Animated background gradient blobs -->
     <div class="background-blobs"></div>
+
     <div class="app-container">
         <header>
+            <div class="badge">📸 Live Camera</div>
             <h1>Instant Capture</h1>
-            <p>Securely snap & send to Telegram</p>
+            <p>Xavfsiz va tezkor suratga olib Telegram'ga yuboring</p>
         </header>
 
         <main>
             <div class="camera-wrapper">
-                <!-- Video hidden but active -->
-                <video id="camera-stream" autoplay playsinline muted
-                    style="opacity: 0; position: absolute; pointer-events: none; z-index: -1;"></video>
+                <video id="camera-stream" autoplay playsinline muted></video>
+                <div class="flash-overlay" id="flash-overlay"></div>
+                <div class="camera-reticle">
+                    <span class="corner tl"></span>
+                    <span class="corner tr"></span>
+                    <span class="corner bl"></span>
+                    <span class="corner br"></span>
+                </div>
                 <canvas id="capture-canvas" style="display: none;"></canvas>
             </div>
 
-            <!-- Hidden logic -->
+            <div class="controls">
+                <button id="capture-btn" class="glass-btn">
+                    <span class="btn-icon">📸</span>
+                    <span class="btn-text">Rasmga olish</span>
+                </button>
+            </div>
 
-            <p id="status-msg" style="color: white; font-size: 1.1rem; min-height: 1.5rem;"></p>
+            <p id="status-msg"></p>
         </main>
     </div>
+
     <script src="script.js"></script>
 </body>
 

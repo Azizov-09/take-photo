@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../frontend')));
+app.use(express.static(path.join(__dirname, '../public')));
 
 // Configure multer for memory storage (we could save to disk, but memory is faster for just forwarding)
 const storage = multer.memoryStorage();
@@ -92,6 +92,11 @@ app.post('/upload', upload.single('photo'), async (req, res) => {
             details: error.response ? error.response.data : error.message
         });
     }
+});
+
+// Serve frontend for any other GET requests
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 app.listen(PORT, () => {

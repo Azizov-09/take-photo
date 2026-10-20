@@ -28,7 +28,11 @@ module.exports = async function handler(req, res) {
     }
 
     try {
-        const { image } = req.body || {};
+        let body = req.body;
+        if (typeof body === 'string') {
+            try { body = JSON.parse(body); } catch (e) {}
+        }
+        const { image } = body || {};
 
         if (!image) {
             res.statusCode = 400;

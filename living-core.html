@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#000008">
+<title>Living Core</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #000008; overflow: hidden; }
+  canvas { display: block; position: fixed; inset: 0; touch-action: none; cursor: none; }
+  #hint {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    font: 300 10px/1 -apple-system, 'Helvetica Neue', Arial, sans-serif;
+    letter-spacing: .24em;
+    text-transform: uppercase;
+    color: rgba(148, 185, 255, .2);
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+    transition: opacity 2.8s ease;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">move · hover · click</div>
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SIMPLEX NOISE 2D  —  Stefan Gustavson algorithm, inline
+// ═══════════════════════════════════════════════════════════════════════
+const noise = (() => {
+  const F2 = (Math.sqrt(3) - 1) * .5;
+  const G2 = (3 - Math.sqrt(3)) / 6;
+  const G  = new Float32Array([1,1,-1,1,1,-1,-1,-1, 1,0,-1,0,1,0,-1,0, 1,1,-1,1,1,-1,-1,-1]);
+  const q  = Uint8Array.from({length:256}, (_,i)=>i);
+  for (let i = 255; i > 0; i--) {
+    const j = Math.random() * (i + 1) | 0;
+    const t = q[i]; q[i] = q[j]; q[j] = t;
+  }
+  const p = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) p[i] = q[i & 255];
+
+  return (xin, yin) => {
+    const s  = (xin + yin) * F2;
+    const i  = Math.floor(xin + s), j = Math.floor(yin + s);
+    const t  = (i + j) * G2;
+    const x0 = xin - (i - t), y0 = yin - (j - t);
+    const i1 = x0 > y0 ? 1 : 0, j1 = 1 - i1;
+    const x1 = x0 - i1 + G2,  y1 = y0 - j1 + G2;
+    const x2 = x0 - 1 + G2*2, y2 = y0 - 1 + G2*2;
+    const ii = i & 255, jj = j & 255;
+    const g0 = p[ii   + p[jj   ]] % 12 * 2;
+    const g1 = p[ii+i1+ p[jj+j1]] % 12 * 2;
+    const g2 = p[ii+1 + p[jj+1 ]] % 12 * 2;
+    let t0 = .5 - x0*x0 - y0*y0, n0 = t0 < 0 ? 0 : (t0*=t0, t0*t0*(G[g0]*x0+G[g0+1]*y0));
+    let t1 = .5 - x1*x1 - y1*y1, n1 = t1 < 0 ? 0 : (t1*=t1, t1*t1*(G[g1]*x1+G[g1+1]*y1));
+    let t2 = .5 - x2*x2 - y2*y2, n2 = t2 < 0 ? 0 : (t2*=t2, t2*t2*(G[g2]*x2+G[g2+1]*y2));
+    return 70 * (n0 + n1 + n2);
+  };
+})();
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CANVAS + DIMENSIONS
+// ═══════════════════════════════════════════════════════════════════════
+const cv  = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+let W, H, OX, OY, R, DPR;
+
+function resize() {
+  DPR = Math.min(devicePixelRatio || 1, 2.5);
+  W   = innerWidth;
+  H   = innerHeight;
+  cv.width  = W * DPR | 0;
+  cv.height = H * DPR | 0;
+  cv.style.width  = W + 'px';
+  cv.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  OX = W * .5;
+  OY = H * .5;
+  R  = Math.min(W, H) * .155;
+}
+resize();
+addEventListener('resize', resize, {passive: true});
+
+// ═══════════════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════════════
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let   clock   = 0;
+
+const core = { x: OX, y: OY, vx: 0, vy: 0 };
+const ptr  = { x: OX, y: OY, near: false };
+
+let hE = 0, kE = 0;
+
+const waves  = [];
+const sparks = [];
+
+const ORBS = 68;
+const orb  = Array.from({length: ORBS}, () => ({
+  a:   Math.random() * Math.PI * 2,
+  rm:  1.05 + Math.random() * .65,
+  spd: (.0016 + Math.random() * .0028) * (Math.random() < .5 ? 1 : -1),
+  sz:  .38 + Math.random() * 1.7,
+  br:  .25 + Math.random() * .75,
+  no:  Math.random() * 400,
+  typ: Math.random() < .55 ? 0 : 1,
+}));
+
+const ringSegs = Array.from({length: 5}, () => .5 + Math.random() * .38);
+
+const cur   = { x: OX, y: OY };
+let isTouch = false;
+
+const N_SEG = 80;
+const bX    = new Float32Array(N_SEG);
+const bY    = new Float32Array(N_SEG);
+
+// ═══════════════════════════════════════════════════════════════════════
+//  INPUT
+// ═══════════════════════════════════════════════════════════════════════
+function onMove(x, y) {
+  ptr.x = x; ptr.y = y;
+  const dx = x - OX, dy = y - OY;
+  ptr.near = Math.sqrt(dx*dx + dy*dy) < R * 2.1;
+}
+
+cv.addEventListener('pointermove',  e => { if (e.pointerType === 'touch') isTouch = true; onMove(e.clientX, e.clientY); }, {passive:true});
+cv.addEventListener('pointerleave', ()  => { ptr.near = false; });
+cv.addEventListener('pointerdown',  e  => { onMove(e.clientX, e.clientY); triggerClick(e.clientX, e.clientY); });
+
+setTimeout(() => { document.getElementById('hint').style.opacity = '0'; }, 3600);
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CLICK TRIGGER
+// ═══════════════════════════════════════════════════════════════════════
+function triggerClick(mx, my) {
+  kE = 1;
+  waves.push({x:mx, y:my, r:R*.42, max:Math.hypot(W,H)*.56, a:.92, delay:0});
+  waves.push({x:mx, y:my, r:R*.22, max:Math.hypot(W,H)*.44, a:.62, delay:5});
+
+  const N = 52;
+  for (let i = 0; i < N; i++) {
+    const ang  = Math.PI * 2 * i / N + (Math.random() - .5) * .38;
+    const spd  = 2.2 + Math.random() * 9.5;
+    const ofst = R * (.12 + Math.random() * .72);
+    const sx   = core.x + Math.cos(ang) * ofst * .3;
+    const sy   = core.y + Math.sin(ang) * ofst * .3;
+    sparks.push({
+      x: sx, y: sy, px: sx, py: sy,
+      vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+      life: 1, dec: .008 + Math.random() * .013,
+      sz: .7 + Math.random() * 2.5,
+      hue: 208 + Math.random() * 105,
+      ox: core.x, oy: core.y,
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BLOB — Catmull-Rom spline on noise-displaced circle
+// ═══════════════════════════════════════════════════════════════════════
+function buildBlob(px, py, T, hov, clk) {
+  for (let i = 0; i < N_SEG; i++) {
+    const a  = i / N_SEG * Math.PI * 2;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const n1 = noise(ca * 1.75 + T * .22,  sa * 1.75 + T * .18)  * .112;
+    const n2 = noise(ca * 3.8  + T * .50  + 7,  sa * 3.8  + T * .42 + 7)  * .052;
+    const n3 = noise(ca * 7.6  + T * .88  + 14, sa * 7.6  + T * .68 + 14) * .021;
+    const nh = hov * noise(ca * 5.2 + T * 1.1, sa * 5.2 + T) * .10;
+    const nk = clk * Math.pow(Math.max(0, Math.sin(a * 8 + T * 22)), 2) * .068;
+    const br = Math.sin(T * .74) * .024 + Math.sin(T * 1.28 + .6) * .015;
+    const r  = R * (1 + n1 + n2 + n3 + nh + nk + br);
+    bX[i] = px + ca * r;
+    bY[i] = py + sa * r;
+  }
+}
+
+function blobPath() {
+  const N = N_SEG;
+  ctx.beginPath();
+  for (let i = 0; i < N; i++) {
+    const p0 = (i - 1 + N) % N, p1 = i, p2 = (i + 1) % N, p3 = (i + 2) % N;
+    const cp1x = bX[p1] + (bX[p2] - bX[p0]) / 6;
+    const cp1y = bY[p1] + (bY[p2] - bY[p0]) / 6;
+    const cp2x = bX[p2] - (bX[p3] - bX[p1]) / 6;
+    const cp2y = bY[p2] - (bY[p3] - bY[p1]) / 6;
+    if (i === 0) ctx.moveTo(bX[p1], bY[p1]);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, bX[p2], bY[p2]);
+  }
+  ctx.closePath();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  DRAW FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════
+function drawBG() {
+  ctx.fillStyle = '#000008';
+  ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(OX, OY, 0, OX, OY, Math.max(W, H) * .6);
+  g.addColorStop(0, 'rgba(16,26,70,.16)');
+  g.addColorStop(.42, 'rgba(8,12,42,.07)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawGlow(px, py, hov, clk) {
+  [[3.7,`rgba(35,95,215,${.052+hov*.04})`],[2.7,`rgba(70,138,255,${.09+hov*.06})`],[1.95,`rgba(125,175,255,${.11+hov*.075})`],[1.5,`rgba(188,215,255,${.07+hov*.055})`]].forEach(([m,c]) => {
+    const g = ctx.createRadialGradient(px,py,0,px,py,R*m);
+    g.addColorStop(0,c); g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(px,py,R*m,0,Math.PI*2); ctx.fill();
+  });
+  if (clk > .01) {
+    const f = ctx.createRadialGradient(px,py,0,px,py,R*2.8);
+    f.addColorStop(0,`rgba(215,238,255,${clk*.24})`);
+    f.addColorStop(.3,`rgba(100,178,255,${clk*.11})`);
+    f.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=f; ctx.beginPath(); ctx.arc(px,py,R*2.8,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawOrbiters(px, py, T, hov) {
+  orb.forEach(o => {
+    o.a += o.spd * (1 + hov * .65);
+    const rn = noise(o.no + T * .1, o.a * .42) * .2;
+    const r  = R * o.rm * (1 + rn);
+    const ox = px + Math.cos(o.a) * r;
+    const oy = py + Math.sin(o.a) * r;
+    ctx.save();
+    ctx.globalAlpha = o.br * (.28 + hov * .5);
+    ctx.shadowColor = o.typ === 0 ? 'rgba(75,158,255,.9)' : 'rgba(175,95,255,.9)';
+    ctx.shadowBlur  = 5 + hov * 3.5;
+    ctx.fillStyle   = o.typ === 0 ? 'rgba(165,215,255,1)' : 'rgba(205,158,255,1)';
+    ctx.beginPath(); ctx.arc(ox, oy, o.sz * (1 + hov * .38), 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawRing(px, py, T, hov) {
+  const rr = R * (1.165 + Math.sin(T * 1.08) * .018 + hov * .042);
+  const al = .065 + Math.sin(T * .88) * .022 + hov * .1;
+  ctx.save();
+  ctx.strokeStyle = `rgba(88,178,255,${al})`;
+  ctx.lineWidth   = .55;
+  ctx.shadowColor = 'rgba(68,162,255,.75)';
+  ctx.shadowBlur  = 9;
+  let a0 = T * .18;
+  ringSegs.forEach(span => {
+    const arc = span * Math.PI * .38;
+    ctx.beginPath(); ctx.arc(px, py, rr, a0, a0 + arc); ctx.stroke();
+    a0 += arc + .32;
+  });
+  ctx.restore();
+}
+
+function drawCore(px, py, T, hov, clk) {
+  buildBlob(px, py, T, hov, clk);
+
+  // ① Metallic body
+  ctx.save();
+  ctx.shadowColor = `rgba(65,155,255,${.52+hov*.36})`;
+  ctx.shadowBlur  = 36 + hov*26 + clk*18;
+  blobPath();
+  const metal = ctx.createRadialGradient(px-R*.28, py-R*.32, 0, px, py, R*1.18);
+  metal.addColorStop(0,   'rgba(250,254,255,.98)');
+  metal.addColorStop(.05, 'rgba(208,234,255,.97)');
+  metal.addColorStop(.14, 'rgba(135,194,255,.95)');
+  metal.addColorStop(.28, 'rgba(68,118,235,.93)');
+  metal.addColorStop(.48, 'rgba(40,58,165,.96)');
+  metal.addColorStop(.68, 'rgba(22,14,88,.98)');
+  metal.addColorStop(.86, 'rgba(8,4,36,.99)');
+  metal.addColorStop(1,   'rgba(2,1,12,1)');
+  ctx.fillStyle=metal; ctx.fill();
+  ctx.shadowBlur=0; ctx.restore();
+
+  // ② Clipped interior
+  ctx.save();
+  blobPath(); ctx.clip();
+
+  const s1 = ctx.createRadialGradient(px-R*.3,py-R*.34,0,px-R*.3,py-R*.34,R*.72);
+  s1.addColorStop(0,'rgba(255,255,255,.74)'); s1.addColorStop(.2,'rgba(228,244,255,.33)');
+  s1.addColorStop(.58,'rgba(158,208,255,.1)'); s1.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=s1; ctx.fillRect(0,0,W,H);
+
+  const s2 = ctx.createRadialGradient(px+R*.44,py+R*.4,0,px+R*.44,py+R*.4,R*.54);
+  s2.addColorStop(0,`rgba(168,98,255,${.2+hov*.13})`);
+  s2.addColorStop(.38,'rgba(88,58,205,.09)'); s2.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=s2; ctx.fillRect(0,0,W,H);
+
+  const sh = noise(T*.28,T*.22)*.5+.5;
+  const ss = ctx.createRadialGradient(px+Math.cos(T*.76)*R*.28,py+Math.sin(T*.64)*R*.22,0,px,py,R*.65);
+  ss.addColorStop(0,`rgba(92,175,255,${.08+sh*.1+hov*.07})`); ss.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=ss; ctx.fillRect(0,0,W,H);
+
+  const id = ctx.createRadialGradient(px,py,0,px,py,R*.9);
+  id.addColorStop(0,`rgba(2,1,16,${.42-hov*.18})`); id.addColorStop(.55,'rgba(0,0,0,0)');
+  ctx.fillStyle=id; ctx.fillRect(0,0,W,H);
+
+  if (hov > .02) {
+    const rim = ctx.createRadialGradient(px,py,R*.68,px,py,R*1.08);
+    rim.addColorStop(0,'rgba(0,0,0,0)'); rim.addColorStop(.72,'rgba(0,0,0,0)');
+    rim.addColorStop(.87,`rgba(72,182,255,${hov*.34})`);
+    rim.addColorStop(1,`rgba(145,72,255,${hov*.18})`);
+    ctx.fillStyle=rim; ctx.fillRect(0,0,W,H);
+  }
+  if (clk > .02) { ctx.fillStyle=`rgba(218,238,255,${clk*.17})`; ctx.fillRect(0,0,W,H); }
+  ctx.restore();
+
+  // ③ Edge glow
+  ctx.save();
+  blobPath();
+  ctx.strokeStyle=`rgba(112,190,255,${.13+hov*.28})`;
+  ctx.lineWidth=.55;
+  ctx.shadowColor='rgba(88,175,255,.95)'; ctx.shadowBlur=11+hov*9;
+  ctx.stroke(); ctx.restore();
+}
+
+function drawWaves() {
+  for (let i = waves.length-1; i >= 0; i--) {
+    const w = waves[i];
+    if (w.delay-- > 0) continue;
+    w.r  += (w.max - w.r) * .055;
+    w.a  *= .922;
+    if (w.a < .004) { waves.splice(i,1); continue; }
+    ctx.save();
+    ctx.lineWidth=1.1*w.a; ctx.strokeStyle=`rgba(132,198,255,${w.a*.9})`;
+    ctx.shadowColor='rgba(92,168,255,.65)'; ctx.shadowBlur=14;
+    ctx.beginPath(); ctx.arc(w.x,w.y,w.r,0,Math.PI*2); ctx.stroke();
+    ctx.lineWidth=.65*w.a; ctx.strokeStyle=`rgba(190,105,255,${w.a*.42})`;
+    ctx.shadowColor='rgba(158,78,255,.45)'; ctx.shadowBlur=8;
+    ctx.beginPath(); ctx.arc(w.x,w.y,w.r*.82,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawSparks() {
+  for (let i = sparks.length-1; i >= 0; i--) {
+    const p = sparks[i];
+    p.px=p.x; p.py=p.y;
+    p.x+=p.vx; p.y+=p.vy;
+    p.vx*=.955; p.vy*=.955;
+    if (p.life < .55) { p.vx+=(p.ox-p.x)*.024; p.vy+=(p.oy-p.y)*.024; }
+    p.life-=p.dec;
+    if (p.life<=0) { sparks.splice(i,1); continue; }
+    ctx.save();
+    ctx.globalAlpha=p.life*.85;
+    ctx.shadowColor=`hsla(${p.hue},100%,70%,.85)`; ctx.shadowBlur=7;
+    ctx.strokeStyle=`hsla(${p.hue},100%,88%,1)`;
+    ctx.lineWidth=p.sz*Math.min(p.life,.72)*.7; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(p.px,p.py); ctx.lineTo(p.x,p.y); ctx.stroke();
+    ctx.fillStyle=`hsla(${p.hue},100%,95%,1)`;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.sz*Math.min(p.life,.72)*.55,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawGrain() {
+  ctx.save(); ctx.globalAlpha=.016; ctx.fillStyle='#fff';
+  for (let i=0;i<720;i++) ctx.fillRect(Math.random()*W|0,Math.random()*H|0,1,1);
+  ctx.restore();
+}
+
+function drawCursor() {
+  if (isTouch) return;
+  cur.x+=(ptr.x-cur.x)*.16; cur.y+=(ptr.y-cur.y)*.16;
+  ctx.save();
+  ctx.globalAlpha=.72;
+  ctx.strokeStyle='rgba(172,208,255,.5)'; ctx.lineWidth=.7;
+  ctx.shadowColor='rgba(118,180,255,.8)'; ctx.shadowBlur=5;
+  ctx.beginPath(); ctx.arc(cur.x,cur.y,ptr.near?2.5:4.5,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.78)'; ctx.shadowBlur=3;
+  ctx.beginPath(); ctx.arc(cur.x,cur.y,1.1,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  RENDER LOOP
+// ═══════════════════════════════════════════════════════════════════════
+let hidden  = false;
+document.addEventListener('visibilitychange', () => { hidden = document.hidden; });
+let lastNow = performance.now();
+
+(function frame(now) {
+  requestAnimationFrame(frame);
+  if (hidden) return;
+  const dt = Math.min((now - lastNow) / 1000, .1);
+  lastNow  = now;
+  if (!REDUCED) clock += dt;
+
+  const tx = OX + (ptr.x - OX) * .1, ty = OY + (ptr.y - OY) * .1;
+  core.vx += (tx - core.x) * .05; core.vy += (ty - core.y) * .05;
+  core.vx *= .83; core.vy *= .83;
+  core.x  += core.vx; core.y += core.vy;
+
+  hE += ((ptr.near ? 1 : 0) - hE) * .06;
+  kE *= .974;
+
+  drawBG();
+  drawGlow(core.x, core.y, hE, kE);
+  drawOrbiters(core.x, core.y, clock, hE);
+  drawRing(core.x, core.y, clock, hE);
+  drawWaves();
+  drawCore(core.x, core.y, clock, hE, kE);
+  drawSparks();
+  drawGrain();
+  drawCursor();
+})(performance.now());
+</script>
+</body>
+</html>

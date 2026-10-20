@@ -1,9 +1,11 @@
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+
 const axios = require('axios');
 const FormData = require('form-data');
 
-// Vars
-const BOT_TOKEN = process.env.BOT_TOKEN || '8529748962:AAEI8PQIiMZvFsWH1wJOircj7W7Mxktv5Do';
-const CHAT_ID = process.env.CHAT_ID || '1603071848';
+// Vars — .env faylidan o'qiladi
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHAT_ID   = process.env.CHAT_ID;
 
 // Main Handler
 module.exports = async function handler(req, res) {
